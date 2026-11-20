@@ -64,7 +64,7 @@ function App(){
  function extractReference(data,width,height){
   const raw=(data.lines||[]).map(line=>{
    const b=line.bbox||{};
-   return {text:String(line.text||'').trim(),x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2,left:b.x0,right:b.x1,top:b.y0,bottom:b.y1,confidence:Number(line.confidence||0)};
+   return {text:String(line.text||'').trim(),x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2,left:b.x0,right:b.x1,top:b.y0,bottom:b.y1,w:b.x1-b.x0,h:b.y1-b.y0,confidence:Number(line.confidence||0)};
   }).filter(l=>Number.isFinite(l.x)&&Number.isFinite(l.y)&&l.text);
   const pricePattern=/(?:\\$|S)\\s*\\d{1,3}(?:[.,]\\d{3})+(?!\\d)/;
   const prices=raw.filter(l=>pricePattern.test(l.text)||/^\\d{1,3}(?:[.,]\\d{3})+$/.test(l.text));
@@ -72,6 +72,9 @@ function App(){
   for(const price of prices){
    for(const line of raw){
     if(line===price||line.y>=price.y||line.bottom>price.top+height*.025)continue;
+    // Reject vertical category labels, strokes and OCR artifacts at the crop edge.
+    if(line.w<=0||line.h<=0||line.w/line.h<1.15)continue;
+    if(line.left<width*.018||line.right>width*.982)continue;
     const ref=normalize(line.text);
     // Numeric-only references (e.g. 45151) and mixed codes (YL0101-419).
     if(!/^[A-Z0-9][A-Z0-9._\\-/]{2,24}$/.test(ref)||!/\\d/.test(ref))continue;
@@ -126,6 +129,11 @@ function App(){
     ctx.filter='grayscale(1) contrast(1.65)';
     ctx.drawImage(v,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
     ctx.filter='none';
+    // Mask thin edge strips: vertical black tag rules and neighboring objects
+    // must not contribute characters to OCR.
+    ctx.fillStyle='#fff';
+    ctx.fillRect(0,0,24,canvas.height);
+    ctx.fillRect(canvas.width-24,0,24,canvas.height);
     const result=await ocr.current.recognize(canvas);
     if(gen!==generation.current)break;
     const candidate=extractReference(result.data,canvas.width,canvas.height);
