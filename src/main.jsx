@@ -28,6 +28,11 @@ function formatPrecio(value){
  return Number.isFinite(n)?new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(n):String(value);
 }
 function App(){
+ const [authenticated,setAuthenticated]=useState(null),[password,setPassword]=useState(''),[authError,setAuthError]=useState(''),[authBusy,setAuthBusy]=useState(false);
+ useEffect(()=>{fetch('/api/auth/status',{credentials:'same-origin'}).then(r=>r.json()).then(x=>{setAuthenticated(!!x.authenticated);if(!x.configured)setAuthError('Configura clave_portal_escanner como Secret en Cloudflare.');}).catch(()=>{setAuthenticated(false);setAuthError('No fue posible verificar la sesión.');});},[]);
+ async function login(e){e.preventDefault();setAuthBusy(true);setAuthError('');try{const r=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({password})});const data=await r.json();if(!r.ok)throw Error(data.error||'No se pudo iniciar sesión');setAuthenticated(true);setPassword('');}catch(e){setAuthError(e.message);}finally{setAuthBusy(false);}}
+ async function logout(){stop();await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});setAuthenticated(false);setPassword('');setItem(null);}
+
  const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map());
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
  const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
@@ -60,7 +65,7 @@ function App(){
   try{
    const response=await fetch('/api/articulo?referencia='+encodeURIComponent(ref));
    const result=await response.json();
-   if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
+   if(response.status===401){stop();setAuthenticated(false);throw Error('Tu sesión venció. Ingresa nuevamente.');}if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
    if(result.data?.length){setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
    else{rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
   }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
@@ -109,7 +114,9 @@ function App(){
   }
  }
  useEffect(()=>()=>{generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate()},[]);
- return <main><header className="topbar"><div className="brand-lockup"><div className="brand-mark"><img src="/toro-gold-isotipo.svg" alt="Isotipo oficial TORO GOLD"/></div><div className="brand-words"><strong>TORO GOLD</strong><span>JOYERÍA EXCLUSIVA</span></div></div><span className="header-chip">ESCÁNER INTELIGENTE</span></header><section className="panel"><div className="eyebrow"><span className="eyebrow-line"/>HERRAMIENTA DE CONSULTA</div><h1>Escáner de <em>referencias</em></h1><p className="intro">Enfoca una sola etiqueta completa, con la referencia encima del precio. El sistema identifica la referencia y consulta Effi automáticamente.</p>
+ if(authenticated===null)return <main className="login-page"><div className="login-card"><img src="/toro-gold-isotipo.svg" alt="TORO GOLD"/><h1>Verificando acceso…</h1></div></main>;
+ if(!authenticated)return <main className="login-page"><section className="login-card"><div className="login-logo"><img src="/toro-gold-isotipo.svg" alt="Isotipo TORO GOLD"/></div><div className="login-brand">TORO GOLD</div><div className="login-subtitle">ESCÁNER INTELIGENTE</div><div className="login-divider"/><h1>Bienvenido</h1><p>Ingresa tu contraseña para acceder al escáner y consultar los precios de nuestros productos.</p><form className="login-form" onSubmit={login}><label htmlFor="portal-password">Contraseña de acceso</label><input id="portal-password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Ingresa tu contraseña"/><button disabled={authBusy}>{authBusy?'Verificando…':'Ingresar al portal'}</button></form>{authError&&<div className="error" role="alert">{authError}</div>}<small className="login-foot">ACCESO EXCLUSIVO · TORO GOLD</small></section></main>;
+ return <main><header className="topbar"><div className="brand-lockup"><div className="brand-mark"><img src="/toro-gold-isotipo.svg" alt="Isotipo oficial TORO GOLD"/></div><div className="brand-words"><strong>TORO GOLD</strong><span>JOYERÍA EXCLUSIVA</span></div></div><button className="logout-button" onClick={logout}>Cerrar sesión</button></header><section className="panel"><div className="eyebrow"><span className="eyebrow-line"/>HERRAMIENTA DE CONSULTA</div><h1>Escáner de <em>referencias</em></h1><p className="intro">Enfoca una sola etiqueta completa, con la referencia encima del precio. El sistema identifica la referencia y consulta Effi automáticamente.</p>
  <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
  <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
  <div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
