@@ -1,14 +1,73 @@
-import React,{useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import{createWorker}from'tesseract.js';import './style.css';
+import React,{useEffect,useRef,useState} from 'react';
+import{createRoot}from'react-dom/client';
+import{createWorker,PSM}from'tesseract.js';
+import './style.css';
 function App(){
- const video=useRef(null),stream=useRef(null),ocr=useRef(null),busy=useRef(false),last=useRef(''),votes=useRef({ref:'',n:0}),running=useRef(false);
- const [status,setStatus]=useState('Presiona Iniciar cámara'),[ref,setRef]=useState(''),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false);
- const normalize=s=>s.toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
- async function lookup(value){const r=normalize(value);if(!r||busy.current)return;busy.current=true;setLoading(true);setError('');setItem(null);setRef(r);setStatus('Consultando '+r+' en Effi…');
- try{const res=await fetch('/api/articulo?referencia='+encodeURIComponent(r));const data=await res.json();if(!res.ok||!data.ok)throw Error(data.error||'Error de consulta');if(data.data?.length){setItem(data.data[0]);last.current=r;setStatus('Producto encontrado');}else{setError('No se encontró una referencia exacta en Effi');setStatus('Sigue enfocando otra referencia');}}
- catch(e){setError(e.message);setStatus('Consulta fallida');}finally{setLoading(false);busy.current=false;}}
- async function start(){setError('');try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});stream.current=s;if(video.current){video.current.srcObject=s;await video.current.play();}setActive(true);setStatus('Preparando reconocimiento…');ocr.current=await createWorker('eng');running.current=true;setStatus('Enfoca la referencia dentro del recuadro');scan();}catch(e){setError('No se pudo abrir la cámara o cargar OCR. Verifica permisos, HTTPS y conexión.');stop();}}
- function stop(){running.current=false;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;const w=ocr.current;ocr.current=null;if(w)w.terminate();setActive(false);setStatus('Cámara detenida');}
- async function scan(){const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d',{willReadFrequently:true});while(running.current){if(!video.current?.videoWidth||busy.current){await new Promise(r=>setTimeout(r,400));continue;}try{const v=video.current;canvas.width=1200;canvas.height=270;ctx.drawImage(v,0,v.videoHeight*.35,v.videoWidth,v.videoHeight*.30,0,0,1200,270);const {data:{text}}=await ocr.current.recognize(canvas);const candidates=text.split(/\s+/).map(normalize).filter(x=>x.length>=3&&x.length<=40&&/\d/.test(x));const candidate=candidates.sort((a,b)=>b.length-a.length)[0];if(candidate&&candidate!==last.current){votes.current=candidate===votes.current.ref?{ref:candidate,n:votes.current.n+1}:{ref:candidate,n:1};if(votes.current.n>=2){votes.current={ref:'',n:0};await lookup(candidate);}}}catch(e){if(running.current)setStatus('Ajusta iluminación y vuelve a enfocar');}await new Promise(r=>setTimeout(r,650));}}
- useEffect(()=>()=>{running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate()},[]);
- return <main><header><div className="brand">◆ TORO GOLD</div><small>ESCÁNER INTELIGENTE</small></header><section className="panel"><h1>Consulta de precios</h1><p>Enfoca la referencia impresa en la etiqueta. Al reconocerla, consultaremos Effi automáticamente.</p><div className="camera"><video ref={video} playsInline muted autoPlay/><div className="target"><span>UBICA AQUÍ LA REFERENCIA</span></div>{!active&&<div className="placeholder">Cámara lista para iniciar</div>}</div><div className="status">{loading?'⏳ ':active?'● ':'○ '}{status}</div><div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={()=>{last.current='';votes.current={ref:'',n:0};setItem(null);setRef('');setError('');setStatus('Enfoca la siguiente etiqueta')}}>Nueva lectura</button></div><form onSubmit={e=>{e.preventDefault();last.current='';lookup(manual)}}><label htmlFor="manual">O introduce una referencia manualmente</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Referencia del artículo"/><button disabled={loading}>Consultar</button></div></form>{error&&<div className="error" role="alert">{error}</div>}{item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto" referrerPolicy="no-referrer"/>}<h2>{item.descripcion}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div><div className="prices"><b>Precios registrados en Effi</b><p>{item.precios_venta||'No hay tarifas disponibles'}</p></div></article>}</section><footer>TORO GOLD · Consulta de solo lectura</footer></main>;
-}createRoot(document.getElementById('root')).render(<App/>);
+ const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0);
+ const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
+ const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
+ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ async function lookup(value){
+  const ref=normalize(value);if(!ref||busy.current)return;
+  busy.current=true;setLoading(true);setError('');setStatus('Consultando '+ref+' en Effi…');
+  try{
+   const response=await fetch('/api/articulo?referencia='+encodeURIComponent(ref));
+   const result=await response.json();
+   if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
+   if(result.data?.length){setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
+   else{setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
+  }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
+  finally{busy.current=false;setLoading(false);}
+ }
+ function next(){
+  locked.current=false;votes.current={ref:'',n:0};setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
+ }
+ async function start(){
+  setError('');try{
+   const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+   stream.current=s;video.current.srcObject=s;await video.current.play();setActive(true);setStatus('Cargando motor OCR…');
+   const worker=await createWorker('eng',1,{logger:()=>{}});
+   await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_/.'});
+   ocr.current=worker;running.current=true;setStatus('Enfoca una sola referencia');scan(generation.current);
+  }catch(e){setError('No se pudo iniciar la cámara o el OCR. Revisa permisos, HTTPS y conexión.');stop();}
+ }
+ function stop(){generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;const w=ocr.current;ocr.current=null;if(w)w.terminate();setActive(false);setStatus('Cámara detenida');}
+ async function scan(gen){
+  const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+  while(running.current&&gen===generation.current){
+   if(locked.current||busy.current||!video.current?.videoWidth){await wait(130);continue;}
+   try{
+    const v=video.current,vw=v.videoWidth,vh=v.videoHeight;
+    const rect=v.getBoundingClientRect(),ratio=Math.max(rect.width/vw,rect.height/vh);
+    const visibleW=rect.width/ratio,visibleH=rect.height/ratio;
+    const left=(vw-visibleW)/2,top=(vh-visibleH)/2;
+    const sx=left+visibleW*.045,sy=top+visibleH*.25,sw=visibleW*.91,sh=visibleH*.50;
+    canvas.width=1280;canvas.height=240;
+    ctx.filter='grayscale(1) contrast(1.65)';
+    ctx.drawImage(v,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
+    ctx.filter='none';
+    const result=await ocr.current.recognize(canvas);
+    if(gen!==generation.current)break;
+    const words=(result.data.text||'').split(/\s+/).map(normalize).filter(x=>x.length>=3&&x.length<=40&&/[0-9]/.test(x));
+    const candidate=words.sort((a,b)=>b.length-a.length)[0];
+    if(candidate){
+      setRecognized(candidate);
+      votes.current=candidate===votes.current.ref?{ref:candidate,n:votes.current.n+1}:{ref:candidate,n:1};
+      setStatus('Detectando: '+candidate);
+      if(votes.current.n>=2){votes.current={ref:'',n:0};await lookup(candidate);}
+    }else{votes.current={ref:'',n:0};setRecognized('Buscando caracteres…');}
+   }catch(e){if(running.current)setStatus('Ajusta el enfoque o la iluminación');}
+   await wait(90);
+  }
+ }
+ useEffect(()=>()=>{generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate()},[]);
+ return <main><header><div className="brand">◆ TORO GOLD</div><small>ESCÁNER INTELIGENTE</small></header><section className="panel"><h1>Escáner de referencias</h1><p>Enfoca una etiqueta dentro del recuadro. El producto se consulta automáticamente en Effi.</p>
+ <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA AQUÍ LA REFERENCIA'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
+ <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
+ <div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
+ <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
+ {error&&<div className="error" role="alert">{error}</div>}
+ {item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<h2>{item.descripcion}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div><div className="prices"><b>Tarifas de Effi</b><p>{item.precios_venta||'Sin tarifas disponibles'}</p></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
+ </section><footer>TORO GOLD · Consulta de solo lectura</footer></main>;
+}
+createRoot(document.getElementById('root')).render(<App/>);
