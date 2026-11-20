@@ -62,24 +62,30 @@ function App(){
  // Identify the horizontal reference immediately above a currency line.
  // A price is an anchor, never a candidate reference.
  function extractReference(data,width,height){
-  const lines=(data.lines||[]).map(line=>{
-   const b=line.bbox||{};return {text:String(line.text||'').trim(),x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2,left:b.x0,right:b.x1,top:b.y0,bottom:b.y1};
-  }).filter(l=>Number.isFinite(l.x)&&l.text);
-  const prices=lines.filter(l=>/\$\s*\d[\d.,]*/.test(l.text)||/^\s*\d{1,3}(?:[.,]\d{3})+(?:\s*\$)?\s*$/.test(l.text));
-  const pairs=[];
+  const raw=(data.lines||[]).map(line=>{
+   const b=line.bbox||{};
+   return {text:String(line.text||'').trim(),x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2,left:b.x0,right:b.x1,top:b.y0,bottom:b.y1,confidence:Number(line.confidence||0)};
+  }).filter(l=>Number.isFinite(l.x)&&Number.isFinite(l.y)&&l.text);
+  const pricePattern=/(?:\\$|S)\\s*\\d{1,3}(?:[.,]\\d{3})+(?!\\d)/;
+  const prices=raw.filter(l=>pricePattern.test(l.text)||/^\\d{1,3}(?:[.,]\\d{3})+$/.test(l.text));
+  const candidates=[];
   for(const price of prices){
-   for(const line of lines){
-    if(line===price||line.y>=price.y||line.bottom>price.top+12)continue;
+   for(const line of raw){
+    if(line===price||line.y>=price.y||line.bottom>price.top+height*.025)continue;
     const ref=normalize(line.text);
-    if(ref.length<3||ref.length>30||!/[A-Z]/.test(ref)||!/[0-9]/.test(ref))continue;
-    if(/\$/.test(line.text)||/^(CADENAS?|ARETES?|PULSERAS?|TOROGOLD)$/.test(ref))continue;
+    // Numeric-only references (e.g. 45151) and mixed codes (YL0101-419).
+    if(!/^[A-Z0-9][A-Z0-9._\\-/]{2,24}$/.test(ref)||!/\\d/.test(ref))continue;
+    if(/\\$/.test(line.text)||/^(CADENAS?|ARETES?|DIJES?|PULSERAS?|TOROGOLD)$/.test(ref))continue;
+    if(/^\\d{1,3}[.,]\\d{3}$/.test(line.text))continue;
     const dy=price.top-line.bottom,dx=Math.abs(price.x-line.x);
-    if(dy>height*.22||dx>width*.24)continue;
-    pairs.push({ref,score:Math.abs(line.x-width/2)/width+dy/height+dx/width});
+    if(dy< -height*.025||dy>height*.22||dx>width*.25)continue;
+    // Prefer nearby text above the price and centered within the scan area.
+    const score=dy/height*3+dx/width*2+Math.abs(line.x-width/2)/width*.4-Math.min(100,line.confidence)/100*.05;
+    candidates.push({ref,score});
    }
   }
-  pairs.sort((a,b)=>a.score-b.score);
-  return pairs[0]?.ref||null;
+  candidates.sort((a,b)=>a.score-b.score);
+  return candidates[0]?.ref||null;
  }
  async function lookup(value){
   const ref=normalize(value);if(!ref||busy.current)return;
