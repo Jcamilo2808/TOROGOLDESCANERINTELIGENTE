@@ -2,6 +2,31 @@ import React,{useEffect,useRef,useState} from 'react';
 import{createRoot}from'react-dom/client';
 import{createWorker,PSM}from'tesseract.js';
 import './style.css';
+function parseTarifas(raw){
+ const result={detal:null,mayor:null};
+ for(const entry of String(raw||'').split(';')){
+  const separator=entry.indexOf(':');
+  if(separator<0)continue;
+  const name=entry.slice(0,separator).trim().toLocaleLowerCase('es');
+  const value=entry.slice(separator+1).trim();
+  if(!value)continue;
+  if(name.includes('emprendedor'))continue;
+  if(name.includes('mayorista')||name.includes('mayor'))result.mayor=value;
+  else if(name.includes('normal'))result.detal=value;
+ }
+ return result;
+}
+function formatPrecio(value){
+ if(!value)return 'No disponible';
+ const cleaned=String(value).replace(/[^\d.,-]/g,'');
+ if(!cleaned)return String(value);
+ let normalized=cleaned;
+ if(/^\d{1,3}(?:[.,]\d{3})+$/.test(cleaned))normalized=cleaned.replace(/[.,]/g,'');
+ else if(cleaned.includes(',')&&cleaned.includes('.'))normalized=cleaned.lastIndexOf(',')>cleaned.lastIndexOf('.')?cleaned.replace(/\./g,'').replace(',','.'):cleaned.replace(/,/g,'');
+ else if(cleaned.includes(','))normalized=cleaned.replace(',','.');
+ const n=Number(normalized);
+ return Number.isFinite(n)?new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(n):String(value);
+}
 function App(){
  const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map());
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
@@ -90,7 +115,7 @@ function App(){
  <div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
  <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
  {error&&<div className="error" role="alert">{error}</div>}
- {item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<h2>{item.descripcion}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div><div className="prices"><b>Tarifas de Effi</b><p>{item.precios_venta||'Sin tarifas disponibles'}</p></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
+ {item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<div className="product-detail"><div className="detail-label">DESCRIPCIÓN</div><h2>{item.descripcion||'Producto sin descripción'}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div></div><div className="price-grid"><div className="price-card retail"><div className="price-label">PRECIO DETAL</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).detal)}</div></div><div className="price-card wholesale"><div className="price-label">PRECIO POR MAYOR</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).mayor)}</div></div></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
  </section><footer>TORO GOLD · Consulta de solo lectura</footer></main>;
 }
 createRoot(document.getElementById('root')).render(<App/>);
