@@ -33,11 +33,17 @@ function App(){
  async function login(e){e.preventDefault();setAuthBusy(true);setAuthError('');try{const r=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({password})});const data=await r.json();if(!r.ok)throw Error(data.error||'No se pudo iniciar sesión');setAuthenticated(true);setPassword('');}catch(e){setAuthError(e.message);}finally{setAuthBusy(false);}}
  async function logout(){stop();await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});setAuthenticated(false);setPassword('');setItem(null);}
 
- const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map()),audioContext=useRef(null);
+ const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map()),audioContext=useRef(null),resultRef=useRef(null),scanRef=useRef(null);
  const [soundEnabled,setSoundEnabled]=useState(true);
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
  const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ useEffect(()=>{
+  if(item&&paused&&resultRef.current){
+   resultRef.current.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+ },[item,paused]);
+
  function unlockAudio(){
   try{const AudioContextClass=window.AudioContext||window.webkitAudioContext;if(!AudioContextClass)return;
    if(!audioContext.current)audioContext.current=new AudioContextClass();
@@ -103,6 +109,7 @@ function App(){
   finally{busy.current=false;setLoading(false);}
  }
  function next(){
+  scanRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
   locked.current=false;votes.current={ref:'',n:0};rejected.current.clear();setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
  }
  async function start(){
@@ -153,12 +160,12 @@ function App(){
  if(authenticated===null)return <main className="login-page"><div className="login-card"><img src="/toro-gold-isotipo.svg" alt="TORO GOLD"/><h1>Verificando acceso…</h1></div></main>;
  if(!authenticated)return <main className="login-page"><section className="login-card"><div className="login-logo"><img src="/toro-gold-isotipo.svg" alt="Isotipo TORO GOLD"/></div><div className="login-brand">TORO GOLD</div><div className="login-subtitle">ESCÁNER INTELIGENTE</div><div className="login-divider"/><h1>Bienvenido</h1><p>Ingresa tu contraseña para acceder al escáner y consultar los precios de nuestros productos.</p><form className="login-form" onSubmit={login}><label htmlFor="portal-password">Contraseña de acceso</label><input id="portal-password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Ingresa tu contraseña"/><button disabled={authBusy}>{authBusy?'Verificando…':'Ingresar al portal'}</button></form>{authError&&<div className="error" role="alert">{authError}</div>}<small className="login-foot">ACCESO EXCLUSIVO · TORO GOLD</small></section></main>;
  return <main><header className="topbar"><div className="brand-lockup"><div className="brand-mark"><img src="/toro-gold-isotipo.svg" alt="Isotipo oficial TORO GOLD"/></div><div className="brand-words"><strong>TORO GOLD</strong><span>JOYERÍA EXCLUSIVA</span></div></div><button className="logout-button" onClick={logout}>Cerrar sesión</button></header><section className="panel"><div className="eyebrow"><span className="eyebrow-line"/>HERRAMIENTA DE CONSULTA</div><h1>Escáner de <em>referencias</em></h1><p className="intro">Enfoca una sola etiqueta completa, con la referencia encima del precio. El sistema identifica la referencia y consulta Effi automáticamente.</p>
- <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
+ <div className="camera" ref={scanRef}><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
  <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
  <div className="sound-row"><span>Confirmación sonora al encontrar un producto</span><button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={()=>{unlockAudio();setSoundEnabled(v=>!v)}}>{soundEnabled?'🔊 Sonido activado':'🔇 Sonido desactivado'}</button></div><div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
  <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
  {error&&<div className="error" role="alert">{error}</div>}
- {item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<div className="product-detail"><div className="detail-label">DESCRIPCIÓN</div><h2>{item.descripcion||'Producto sin descripción'}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div></div><div className="price-grid"><div className="price-card retail"><div className="price-label">PRECIO DETAL</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).detal)}</div></div><div className="price-card wholesale"><div className="price-label">PRECIO POR MAYOR</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).mayor)}</div></div></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
+ {item&&<article className="result" ref={resultRef}><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<div className="product-detail"><div className="detail-label">DESCRIPCIÓN</div><h2>{item.descripcion||'Producto sin descripción'}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div></div><div className="price-grid"><div className="price-card retail"><div className="price-label">PRECIO DETAL</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).detal)}</div></div><div className="price-card wholesale"><div className="price-label">PRECIO POR MAYOR</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).mayor)}</div></div></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
  </section><footer><img src="/toro-gold-isotipo.svg" alt="TORO GOLD"/><span>TORO GOLD <b>·</b> JOYERÍA EXCLUSIVA</span><small>Escáner inteligente · Consulta de solo lectura</small></footer></main>;
 }
 createRoot(document.getElementById('root')).render(<App/>);
