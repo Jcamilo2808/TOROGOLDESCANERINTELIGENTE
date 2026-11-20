@@ -35,6 +35,17 @@ function App(){
 
  const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map()),audioContext=useRef(null),resultRef=useRef(null),scanRef=useRef(null);
  const [soundEnabled,setSoundEnabled]=useState(true);
+ const [historyOpen,setHistoryOpen]=useState(false);
+ const [recentRefs,setRecentRefs]=useState(()=>{
+  try{const saved=JSON.parse(localStorage.getItem('tg_scanner_recent_refs')||'[]');return Array.isArray(saved)?saved.filter(v=>typeof v==='string').slice(0,10):[];}catch{return [];}
+ });
+ function rememberRef(ref){
+  setRecentRefs(previous=>{
+   const next=[ref,...previous.filter(x=>x!==ref)].slice(0,10);
+   try{localStorage.setItem('tg_scanner_recent_refs',JSON.stringify(next));}catch{}
+   return next;
+  });
+ }
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
  const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -103,7 +114,7 @@ function App(){
    const response=await fetch('/api/articulo?referencia='+encodeURIComponent(ref));
    const result=await response.json();
    if(response.status===401){stop();setAuthenticated(false);throw Error('Tu sesión venció. Ingresa nuevamente.');}if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
-   if(result.data?.length){playScanSound();setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
+   if(result.data?.length){rememberRef(ref);playScanSound();setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
    else{rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
   }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
   finally{busy.current=false;setLoading(false);}
@@ -111,6 +122,14 @@ function App(){
  function next(){
   scanRef.current?.scrollIntoView({behavior:'smooth',block:'start'});
   locked.current=false;votes.current={ref:'',n:0};rejected.current.clear();setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
+ }
+ function openRecent(ref){
+  if(busy.current)return;
+  setHistoryOpen(false);
+  locked.current=true;
+  votes.current={ref:'',n:0};
+  setItem(null);setError('');setRecognized(ref);
+  lookup(ref);
  }
  async function start(){
   unlockAudio();setError('');try{
@@ -162,6 +181,8 @@ function App(){
  return <main><header className="topbar"><div className="brand-lockup"><div className="brand-mark"><img src="/toro-gold-isotipo.svg" alt="Isotipo oficial TORO GOLD"/></div><div className="brand-words"><strong>TORO GOLD</strong><span>JOYERÍA EXCLUSIVA</span></div></div><button className="logout-button" onClick={logout}>Cerrar sesión</button></header><section className="panel"><div className="eyebrow"><span className="eyebrow-line"/>HERRAMIENTA DE CONSULTA</div><h1>Escáner de <em>referencias</em></h1><p className="intro">Enfoca una sola etiqueta completa, con la referencia encima del precio. El sistema identifica la referencia y consulta Effi automáticamente.</p>
  <div className="camera" ref={scanRef}><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
  <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
+ <div className="recent-toolbar"><button type="button" className="recent-trigger" onClick={()=>setHistoryOpen(v=>!v)} aria-expanded={historyOpen}>◷ Últimas referencias <span className="recent-count">{recentRefs.length}/10</span> <span>{historyOpen?'▲':'▼'}</span></button></div>
+ {historyOpen&&<div className="recent-panel"><div className="recent-heading">ÚLTIMAS 10 REFERENCIAS CONSULTADAS</div>{recentRefs.length===0?<p className="recent-empty">Aún no hay productos escaneados. Tus últimas referencias aparecerán aquí.</p>:<div className="recent-list">{recentRefs.map((ref,i)=><button type="button" className="recent-entry" key={ref} disabled={loading} onClick={()=>openRecent(ref)}><span className="recent-index">{String(i+1).padStart(2,'0')}</span><strong>{ref}</strong><span className="recent-open">Consultar ↗</span></button>)}</div>}<p className="recent-note">Se guardan únicamente las referencias en este dispositivo. Al elegir una, los precios se consultan nuevamente en Effi.</p></div>}
  <div className="sound-row"><span>Confirmación sonora al encontrar un producto</span><button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={()=>{unlockAudio();setSoundEnabled(v=>!v)}}>{soundEnabled?'🔊 Sonido activado':'🔇 Sonido desactivado'}</button></div><div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
  <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
  {error&&<div className="error" role="alert">{error}</div>}
