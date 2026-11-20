@@ -115,8 +115,8 @@ function App(){
    const result=await response.json();
    if(response.status===401){stop();setAuthenticated(false);throw Error('Tu sesión venció. Ingresa nuevamente.');}if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
    if(result.data?.length){rememberRef(ref);playScanSound();setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
-   else{rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
-  }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
+   else{locked.current=false;rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
+  }catch(e){locked.current=false;setError(e.message);setStatus('Error al consultar Effi');}
   finally{busy.current=false;setLoading(false);}
  }
  function next(){
