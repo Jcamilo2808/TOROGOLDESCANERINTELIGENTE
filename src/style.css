@@ -17,3 +17,20 @@ form{margin-top:23px;padding:20px;background:#fff;border:1px solid #e9ded5;borde
 .price-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:18px}.price-card{padding:19px;border-radius:14px;border:1px solid transparent}.price-label{font-size:11px;font-weight:800;letter-spacing:1.3px;margin-bottom:6px}.price-amount{font-family:'Anek Bangla',sans-serif;font-size:clamp(29px,7vw,38px);font-weight:700;line-height:1.1;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.retail{background:#fff7eb;border-color:#dcd0c0;color:#440000}.retail .price-label{color:#8d847c}.wholesale{background:linear-gradient(110deg,#590000,#440000);border-color:#590000;color:#fff7eb}.wholesale .price-label{color:#e4b6b6}.next{width:100%;margin-top:16px;background:#be0000;border-color:#be0000}
 footer{border-top:1px solid #dcd0c0;padding:28px 18px 35px;display:flex;align-items:center;flex-direction:column;gap:5px;text-align:center;color:#590000;font-size:11px;letter-spacing:1.5px;font-weight:800}footer img{width:48px;height:48px;object-fit:contain;margin-bottom:6px}footer b{color:#be0000}footer small{font-size:10px;color:#8d847c;letter-spacing:.3px;font-weight:500}
 @media(max-width:370px){.topbar{padding:13px}.brand-words strong{font-size:18px}.brand-mark{width:44px;height:44px}.brand-mark img{width:40px;height:40px}.header-chip{font-size:8px;padding:6px}.panel{padding:20px 12px}.manual{flex-wrap:wrap}.manual button{width:100%}}
+
+/* Password-gated portal */
+.login-page{display:flex;align-items:center;justify-content:center;padding:24px;min-height:100dvh;background:radial-gradient(circle at 50% 10%,#750d0d,#440000 75%)}
+.login-card{width:100%;max-width:420px;border-radius:22px;background:#fff7eb;padding:35px 26px 28px;text-align:center;box-shadow:0 25px 70px #17000066}
+.login-logo{width:110px;height:110px;margin:0 auto 10px;display:grid;place-items:center;background:#fff;border-radius:26px}
+.login-logo img{width:94px;height:94px;object-fit:contain}
+.login-brand{font-family:'Anek Bangla',sans-serif;font-size:29px;font-weight:700;letter-spacing:2px;color:#440000;line-height:1.2}
+.login-subtitle{font-size:10px;letter-spacing:2.4px;color:#be0000;font-weight:800}
+.login-divider{height:1px;background:#dcd0c0;margin:24px 0}
+.login-card h1{margin:0 0 8px;font-size:35px}
+.login-card p{font-size:13px;line-height:1.6;margin:0}
+.login-form{padding:0;border:0;background:transparent;text-align:left;margin-top:24px}
+.login-form label{margin-bottom:10px}
+.login-form input{width:100%;height:50px;background:#fff;border-color:#dcd0c0}
+.login-form button{width:100%;margin-top:13px;height:50px;background:#590000}
+.login-foot{display:block;margin-top:25px;font-size:9px;letter-spacing:1.6px;color:#8d847c;font-weight:800}
+.logout-button{background:transparent;border:1px solid #dcd0c090;border-radius:9px;color:#fff7eb;padding:10px 12px;font-size:10px;flex-shrink:0}
