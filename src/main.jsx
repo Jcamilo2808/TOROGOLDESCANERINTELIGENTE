@@ -33,10 +33,32 @@ function App(){
  async function login(e){e.preventDefault();setAuthBusy(true);setAuthError('');try{const r=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({password})});const data=await r.json();if(!r.ok)throw Error(data.error||'No se pudo iniciar sesión');setAuthenticated(true);setPassword('');}catch(e){setAuthError(e.message);}finally{setAuthBusy(false);}}
  async function logout(){stop();await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});setAuthenticated(false);setPassword('');setItem(null);}
 
- const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map());
+ const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map()),audioContext=useRef(null);
+ const [soundEnabled,setSoundEnabled]=useState(true);
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
  const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ function unlockAudio(){
+  try{const AudioContextClass=window.AudioContext||window.webkitAudioContext;if(!AudioContextClass)return;
+   if(!audioContext.current)audioContext.current=new AudioContextClass();
+   if(audioContext.current.state==='suspended')audioContext.current.resume().catch(()=>{});
+  }catch{}
+ }
+ function playScanSound(){
+  if(!soundEnabled)return;
+  try{const ctx=audioContext.current;if(!ctx||ctx.state!=='running')return;
+   const start=ctx.currentTime+.01;
+   [[1050,0,.075],[1450,.095,.105]].forEach(([frequency,offset,duration])=>{
+    const oscillator=ctx.createOscillator(),gain=ctx.createGain();
+    oscillator.type='sine';oscillator.frequency.setValueAtTime(frequency,start+offset);
+    gain.gain.setValueAtTime(.0001,start+offset);
+    gain.gain.exponentialRampToValueAtTime(.11,start+offset+.012);
+    gain.gain.exponentialRampToValueAtTime(.0001,start+offset+duration);
+    oscillator.connect(gain);gain.connect(ctx.destination);
+    oscillator.start(start+offset);oscillator.stop(start+offset+duration+.01);
+   });
+  }catch{}
+ }
  // Identify the horizontal reference immediately above a currency line.
  // A price is an anchor, never a candidate reference.
  function extractReference(data,width,height){
@@ -66,7 +88,7 @@ function App(){
    const response=await fetch('/api/articulo?referencia='+encodeURIComponent(ref));
    const result=await response.json();
    if(response.status===401){stop();setAuthenticated(false);throw Error('Tu sesión venció. Ingresa nuevamente.');}if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
-   if(result.data?.length){setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
+   if(result.data?.length){playScanSound();setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
    else{rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
   }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
   finally{busy.current=false;setLoading(false);}
@@ -75,7 +97,7 @@ function App(){
   locked.current=false;votes.current={ref:'',n:0};rejected.current.clear();setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
  }
  async function start(){
-  setError('');try{
+  unlockAudio();setError('');try{
    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
    stream.current=s;video.current.srcObject=s;await video.current.play();setActive(true);setStatus('Cargando motor OCR…');
    const worker=await createWorker('eng',1,{logger:()=>{}});
@@ -113,13 +135,13 @@ function App(){
    await wait(90);
   }
  }
- useEffect(()=>()=>{generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate()},[]);
+ useEffect(()=>()=>{generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate();audioContext.current?.close().catch(()=>{})},[]);
  if(authenticated===null)return <main className="login-page"><div className="login-card"><img src="/toro-gold-isotipo.svg" alt="TORO GOLD"/><h1>Verificando acceso…</h1></div></main>;
  if(!authenticated)return <main className="login-page"><section className="login-card"><div className="login-logo"><img src="/toro-gold-isotipo.svg" alt="Isotipo TORO GOLD"/></div><div className="login-brand">TORO GOLD</div><div className="login-subtitle">ESCÁNER INTELIGENTE</div><div className="login-divider"/><h1>Bienvenido</h1><p>Ingresa tu contraseña para acceder al escáner y consultar los precios de nuestros productos.</p><form className="login-form" onSubmit={login}><label htmlFor="portal-password">Contraseña de acceso</label><input id="portal-password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Ingresa tu contraseña"/><button disabled={authBusy}>{authBusy?'Verificando…':'Ingresar al portal'}</button></form>{authError&&<div className="error" role="alert">{authError}</div>}<small className="login-foot">ACCESO EXCLUSIVO · TORO GOLD</small></section></main>;
  return <main><header className="topbar"><div className="brand-lockup"><div className="brand-mark"><img src="/toro-gold-isotipo.svg" alt="Isotipo oficial TORO GOLD"/></div><div className="brand-words"><strong>TORO GOLD</strong><span>JOYERÍA EXCLUSIVA</span></div></div><button className="logout-button" onClick={logout}>Cerrar sesión</button></header><section className="panel"><div className="eyebrow"><span className="eyebrow-line"/>HERRAMIENTA DE CONSULTA</div><h1>Escáner de <em>referencias</em></h1><p className="intro">Enfoca una sola etiqueta completa, con la referencia encima del precio. El sistema identifica la referencia y consulta Effi automáticamente.</p>
  <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
  <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
- <div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
+ <div className="sound-row"><span>Confirmación sonora al encontrar un producto</span><button type="button" className="sound-toggle" aria-pressed={soundEnabled} onClick={()=>{unlockAudio();setSoundEnabled(v=>!v)}}>{soundEnabled?'🔊 Sonido activado':'🔇 Sonido desactivado'}</button></div><div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
  <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
  {error&&<div className="error" role="alert">{error}</div>}
  {item&&<article className="result"><div className="found">✓ PRODUCTO ENCONTRADO</div>{item.url_foto&&<img src={item.url_foto} alt="Producto"/>}<div className="product-detail"><div className="detail-label">DESCRIPCIÓN</div><h2>{item.descripcion||'Producto sin descripción'}</h2><div className="line"><span>Referencia</span><strong>{item.referencia}</strong></div><div className="line"><span>Categoría</span><strong>{item.nombre_categoria||'Sin categoría'}</strong></div></div><div className="price-grid"><div className="price-card retail"><div className="price-label">PRECIO DETAL</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).detal)}</div></div><div className="price-card wholesale"><div className="price-label">PRECIO POR MAYOR</div><div className="price-amount">{formatPrecio(parseTarifas(item.precios_venta).mayor)}</div></div></div><button className="next" onClick={next}>Escanear siguiente producto</button></article>}
