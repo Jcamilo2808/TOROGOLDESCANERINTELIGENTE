@@ -3,10 +3,32 @@ import{createRoot}from'react-dom/client';
 import{createWorker,PSM}from'tesseract.js';
 import './style.css';
 function App(){
- const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0);
+ const video=useRef(null),stream=useRef(null),ocr=useRef(null),running=useRef(false),busy=useRef(false),locked=useRef(false),votes=useRef({ref:'',n:0}),generation=useRef(0),rejected=useRef(new Map());
  const [status,setStatus]=useState('Inicia la cámara para escanear'),[recognized,setRecognized]=useState('—'),[manual,setManual]=useState(''),[item,setItem]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[active,setActive]=useState(false),[paused,setPaused]=useState(false);
  const normalize=s=>String(s||'').toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9._\-/]/g,'');
  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ // Identify the horizontal reference immediately above a currency line.
+ // A price is an anchor, never a candidate reference.
+ function extractReference(data,width,height){
+  const lines=(data.lines||[]).map(line=>{
+   const b=line.bbox||{};return {text:String(line.text||'').trim(),x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2,left:b.x0,right:b.x1,top:b.y0,bottom:b.y1};
+  }).filter(l=>Number.isFinite(l.x)&&l.text);
+  const prices=lines.filter(l=>/\$\s*\d[\d.,]*/.test(l.text)||/^\s*\d{1,3}(?:[.,]\d{3})+(?:\s*\$)?\s*$/.test(l.text));
+  const pairs=[];
+  for(const price of prices){
+   for(const line of lines){
+    if(line===price||line.y>=price.y||line.bottom>price.top+12)continue;
+    const ref=normalize(line.text);
+    if(ref.length<3||ref.length>30||!/[A-Z]/.test(ref)||!/[0-9]/.test(ref))continue;
+    if(/\$/.test(line.text)||/^(CADENAS?|ARETES?|PULSERAS?|TOROGOLD)$/.test(ref))continue;
+    const dy=price.top-line.bottom,dx=Math.abs(price.x-line.x);
+    if(dy>height*.22||dx>width*.24)continue;
+    pairs.push({ref,score:Math.abs(line.x-width/2)/width+dy/height+dx/width});
+   }
+  }
+  pairs.sort((a,b)=>a.score-b.score);
+  return pairs[0]?.ref||null;
+ }
  async function lookup(value){
   const ref=normalize(value);if(!ref||busy.current)return;
   busy.current=true;setLoading(true);setError('');setStatus('Consultando '+ref+' en Effi…');
@@ -15,19 +37,19 @@ function App(){
    const result=await response.json();
    if(!response.ok||!result.ok)throw Error(result.error||'No fue posible consultar Effi');
    if(result.data?.length){setItem(result.data[0]);setRecognized(ref);locked.current=true;setPaused(true);setStatus('Producto encontrado · lectura detenida');if(navigator.vibrate)navigator.vibrate(80);}
-   else{setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
+   else{rejected.current.set(ref,Date.now()+5000);setStatus('Referencia no encontrada. Ajusta la etiqueta.');setError('Effi no encontró la referencia '+ref);votes.current={ref:'',n:0};}
   }catch(e){setError(e.message);setStatus('Error al consultar Effi');}
   finally{busy.current=false;setLoading(false);}
  }
  function next(){
-  locked.current=false;votes.current={ref:'',n:0};setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
+  locked.current=false;votes.current={ref:'',n:0};rejected.current.clear();setPaused(false);setRecognized('—');setItem(null);setError('');setStatus(active?'Enfoca la siguiente referencia':'Inicia la cámara para escanear');
  }
  async function start(){
   setError('');try{
    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
    stream.current=s;video.current.srcObject=s;await video.current.play();setActive(true);setStatus('Cargando motor OCR…');
    const worker=await createWorker('eng',1,{logger:()=>{}});
-   await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_/.'});
+   await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
    ocr.current=worker;running.current=true;setStatus('Enfoca una sola referencia');scan(generation.current);
   }catch(e){setError('No se pudo iniciar la cámara o el OCR. Revisa permisos, HTTPS y conexión.');stop();}
  }
@@ -42,27 +64,28 @@ function App(){
     const visibleW=rect.width/ratio,visibleH=rect.height/ratio;
     const left=(vw-visibleW)/2,top=(vh-visibleH)/2;
     const sx=left+visibleW*.045,sy=top+visibleH*.25,sw=visibleW*.91,sh=visibleH*.50;
-    canvas.width=1280;canvas.height=240;
+    canvas.width=1280;canvas.height=640;
     ctx.filter='grayscale(1) contrast(1.65)';
     ctx.drawImage(v,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
     ctx.filter='none';
     const result=await ocr.current.recognize(canvas);
     if(gen!==generation.current)break;
-    const words=(result.data.text||'').split(/\s+/).map(normalize).filter(x=>x.length>=3&&x.length<=40&&/[0-9]/.test(x));
-    const candidate=words.sort((a,b)=>b.length-a.length)[0];
+    const candidate=extractReference(result.data,canvas.width,canvas.height);
     if(candidate){
       setRecognized(candidate);
       votes.current=candidate===votes.current.ref?{ref:candidate,n:votes.current.n+1}:{ref:candidate,n:1};
-      setStatus('Detectando: '+candidate);
-      if(votes.current.n>=2){votes.current={ref:'',n:0};await lookup(candidate);}
-    }else{votes.current={ref:'',n:0};setRecognized('Buscando caracteres…');}
+      setStatus('Referencia sobre precio: '+candidate);
+      if(votes.current.n>=2&&!((rejected.current.get(candidate)||0)>Date.now())){
+        votes.current={ref:'',n:0};await lookup(candidate);
+      }
+    }else{votes.current={ref:'',n:0};setRecognized('Buscando referencia sobre el precio…');}
    }catch(e){if(running.current)setStatus('Ajusta el enfoque o la iluminación');}
    await wait(90);
   }
  }
  useEffect(()=>()=>{generation.current++;running.current=false;stream.current?.getTracks().forEach(t=>t.stop());ocr.current?.terminate()},[]);
- return <main><header><div className="brand">◆ TORO GOLD</div><small>ESCÁNER INTELIGENTE</small></header><section className="panel"><h1>Escáner de referencias</h1><p>Enfoca una etiqueta dentro del recuadro. El producto se consulta automáticamente en Effi.</p>
- <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA AQUÍ LA REFERENCIA'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
+ return <main><header><div className="brand">◆ TORO GOLD</div><small>ESCÁNER INTELIGENTE</small></header><section className="panel"><h1>Escáner de referencias</h1><p>Enfoca una sola etiqueta completa, con la referencia encima del precio. Solo leeremos esa referencia.</p>
+ <div className="camera"><video ref={video} playsInline muted autoPlay/><div className={'target '+(paused?'target-success':'')}><span>{paused?'LECTURA COMPLETADA':'ENFOCA REFERENCIA + PRECIO'}</span></div>{!active&&<div className="placeholder">Activa la cámara para comenzar</div>}</div>
  <div className="recognition"><div className="recognition-label">LECTURA EN TIEMPO REAL</div><div className="recognition-value" aria-live="polite">{recognized}</div><div className="status">{loading?'Consultando…':status}</div></div>
  <div className="buttons"><button onClick={active?stop:start}>{active?'Detener cámara':'Iniciar cámara'}</button><button className="secondary" onClick={next}>{paused?'Escanear siguiente':'Reiniciar lectura'}</button></div>
  <form onSubmit={e=>{e.preventDefault();next();setRecognized(normalize(manual));lookup(manual)}}><label htmlFor="manual">Consulta manual</label><div className="manual"><input id="manual" value={manual} onChange={e=>setManual(e.target.value)} placeholder="Escribe la referencia"/><button disabled={loading}>Consultar</button></div></form>
